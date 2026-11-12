@@ -30,6 +30,27 @@ curl -i http://localhost:3000/health
 Expected response: `200 OK` with `Content-Type: application/json` and body `{"status":"ok"}`.
 Any other path returns `404 Not Found`.
 
+## Request logging
+
+Request logging is off by default. Turn it on with a flag or an environment variable:
+
+```sh
+cargo run -- --log-requests
+LOG_REQUESTS=1 cargo run
+```
+
+`LOG_REQUESTS` accepts `1`, `true` or `yes` (case-insensitive). When on, the server prints
+`Request logging enabled` at startup and one line per request, including 404 and 405 responses:
+
+```
+2026-11-12T10:15:30.123456Z  INFO method=GET uri=/health status=200 latency_ms=0 request_body="" response_body="{\"status\":\"ok\"}"
+```
+
+Each line has a UTC timestamp, the method, the path and query string, the status code, the
+duration, and the request and response bodies. Bodies are truncated to 1 KiB
+(`…(truncated, N bytes total)`), and bodies that are not UTF-8 show as `<N bytes of binary data>`.
+Logging never changes the response the client receives.
+
 ## Run the tests
 
 ```sh
