@@ -5,9 +5,10 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8.9"
+chrono = { version = "0.4.45", default-features = false, features = ["serde", "clock", "std"] }
 futures-util = "0.3.34"
 serde = { version = "1.0.229", features = ["derive"] }
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "tls-rustls-ring"] }
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "postgres", "tls-rustls-ring", "macros", "migrate", "chrono"] }
 tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "time"] }
 toml = "1.2.1"
 tracing = "0.1.44"

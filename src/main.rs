@@ -51,12 +51,14 @@ async fn connect_database() -> Option<sqlx::PgPool> {
         let config = DatabaseConfig::load(&path)?
             .with_password_override(std::env::var("DATABASE_PASSWORD").ok());
         let pool = db::connect(&config).await?;
-        Ok::<_, db::DbError>((pool, config.display_target()))
+        println!("Connected to PostgreSQL at {}", config.display_target());
+        db::migrate(&pool).await?;
+        Ok::<_, db::DbError>(pool)
     }
     .await;
     match result {
-        Ok((pool, target)) => {
-            println!("Connected to PostgreSQL at {target}");
+        Ok(pool) => {
+            println!("Database migrations applied");
             Some(pool)
         }
         Err(err) => {
