@@ -3,7 +3,7 @@
 use axum::{
     Extension, Json, Router,
     extract::{
-        Path,
+        DefaultBodyLimit, Path,
         rejection::{JsonRejection, PathRejection},
     },
     http::{StatusCode, header},
@@ -11,8 +11,12 @@ use axum::{
     routing::get,
 };
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize, Deserializer, Serialize,
+    de::{MapAccess, Visitor, value::MapAccessDeserializer},
+};
 use sqlx::PgPool;
+use std::fmt;
 
 /// Maximum title length, in characters (Unicode scalar values).
 pub const MAX_TITLE_CHARS: usize = 200;
@@ -28,11 +32,43 @@ pub struct Post {
 }
 
 /// Request body of `POST /posts` and `PUT /posts/{id}`.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+///
+/// Only a JSON object is accepted: unlike a derived `Deserialize`, positional arrays
+/// such as `["title", "body"]` are rejected.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostInput {
     pub title: String,
     pub body: String,
+}
+
+/// The fields of [`PostInput`], deserialized from the map handed over by its visitor.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PostInputFields {
+    title: String,
+    body: String,
+}
+
+impl<'de> Deserialize<'de> for PostInput {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ObjectVisitor;
+
+        impl<'de> Visitor<'de> for ObjectVisitor {
+            type Value = PostInput;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("a JSON object with \"title\" and \"body\"")
+            }
+
+            fn visit_map<A: MapAccess<'de>>(self, map: A) -> Result<PostInput, A::Error> {
+                let PostInputFields { title, body } =
+                    PostInputFields::deserialize(MapAccessDeserializer::new(map))?;
+                Ok(PostInput { title, body })
+            }
+        }
+
+        deserializer.deserialize_map(ObjectVisitor)
+    }
 }
 
 impl PostInput {
@@ -211,11 +247,13 @@ pub async fn delete(
 }
 
 /// Routes for `/posts` and `/posts/{id}`. Handlers expect an `Extension<PgPool>` layer
-/// (see [`crate::with_database`]) and answer 503 without it.
+/// (see [`crate::with_database`]) and answer 503 without it. Request bodies have no
+/// size limit (Axum's default 2 MiB limit is disabled).
 pub fn router() -> Router {
     Router::new()
         .route("/posts", get(list).post(create))
         .route("/posts/{id}", get(get_post).put(update).delete(delete))
+        .layer(DefaultBodyLimit::disable())
 }
 
 #[cfg(test)]
@@ -259,6 +297,25 @@ mod tests {
         let err = serde_json::from_str::<PostInput>(r#"{"title":"a","body":"b","x":1}"#);
         assert!(err.is_err());
         let ok: PostInput = serde_json::from_str(r#"{"title":"a","body":""}"#).unwrap();
+        assert_eq!(ok, input("a"));
+    }
+
+    #[test]
+    fn only_json_objects_accepted() {
+        for body in [
+            r#"["Hello","World"]"#,
+            r#"["Hello"]"#,
+            "[]",
+            r#""Hello""#,
+            "1",
+            "null",
+        ] {
+            assert!(serde_json::from_str::<PostInput>(body).is_err(), "{body}");
+        }
+        for body in [r#"{"title":"a"}"#, r#"{"title":1,"body":"b"}"#] {
+            assert!(serde_json::from_str::<PostInput>(body).is_err(), "{body}");
+        }
+        let ok: PostInput = serde_json::from_str(r#"{"body":"","title":"a"}"#).unwrap();
         assert_eq!(ok, input("a"));
     }
 

@@ -123,6 +123,50 @@ async fn health_still_ok_and_other_methods_405() {
     );
 }
 
+/// A router whose pool points at a closed port: handlers get past the pool check and
+/// parse the body, then fail with 500 when they reach the database.
+fn unreachable_db_router() -> Router {
+    let options = sqlx::postgres::PgConnectOptions::new()
+        .host("127.0.0.1")
+        .port(1);
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy_with(options);
+    with_database(app(), pool)
+}
+
+/// A valid body larger than Axum's default 2 MiB limit.
+fn large_body() -> String {
+    format!(
+        r#"{{"title":"Big","body":"{}"}}"#,
+        "x".repeat(3 * 1024 * 1024)
+    )
+}
+
+#[tokio::test]
+async fn array_payloads_are_400() {
+    let router = unreachable_db_router();
+    for (method, uri) in [(Method::POST, "/posts"), (Method::PUT, "/posts/1")] {
+        for body in [r#"["Hello","World"]"#, "[]"] {
+            send(&router, method.clone(), uri, Some(body))
+                .await
+                .assert_error(StatusCode::BAD_REQUEST);
+        }
+    }
+}
+
+#[tokio::test]
+async fn bodies_over_2_mib_pass_parsing() {
+    let router = unreachable_db_router();
+    let body = large_body();
+    for (method, uri) in [(Method::POST, "/posts"), (Method::PUT, "/posts/1")] {
+        // Reaching the (unreachable) database means the body was accepted.
+        send(&router, method.clone(), uri, Some(&body))
+            .await
+            .assert_error(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+}
+
 async fn db_router() -> Router {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("config/database.example.toml");
     let config = DatabaseConfig::load(&path)
@@ -225,6 +269,7 @@ async fn invalid_input() {
         r#"{"title":"t"}"#,
         r#"{"title":"t","body":"b","extra":1}"#,
         r#"{"title":1,"body":"b"}"#,
+        r#"["Hello","World"]"#,
         "not json",
     ] {
         send(&router, Method::POST, "/posts", Some(body))
@@ -270,5 +315,26 @@ async fn invalid_input() {
     send(&router, Method::PUT, &uri, Some("{"))
         .await
         .assert_error(StatusCode::BAD_REQUEST);
+    send(&router, Method::PUT, &uri, Some(r#"["Hello","World"]"#))
+        .await
+        .assert_error(StatusCode::BAD_REQUEST);
+    send(&router, Method::DELETE, &uri, None).await;
+}
+
+#[tokio::test]
+#[ignore = "needs a running PostgreSQL (docker compose up -d)"]
+async fn large_bodies_are_stored() {
+    let router = db_router().await;
+    let body = large_body();
+    let expected = &serde_json::from_str::<Value>(&body).unwrap()["body"];
+
+    let created = send(&router, Method::POST, "/posts", Some(&body)).await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    assert_eq!(&created.json()["body"], expected);
+    let uri = created.location.clone().unwrap();
+
+    let updated = send(&router, Method::PUT, &uri, Some(&body)).await;
+    assert_eq!(updated.status, StatusCode::OK);
+    assert_eq!(&updated.json()["body"], expected);
     send(&router, Method::DELETE, &uri, None).await;
 }
