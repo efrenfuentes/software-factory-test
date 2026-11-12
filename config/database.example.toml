@@ -1,0 +1,25 @@
+# PostgreSQL connection settings.
+#
+# Copy this file to config/database.toml (git-ignored) and adjust it:
+#   cp config/database.example.toml config/database.toml
+# The values below match compose.yaml (`docker compose up -d`) and are for local
+# development only. Another file can be used with DATABASE_CONFIG=/path/to/file.toml.
+
+[postgres]
+# Server host name or IP address. Required.
+host = "localhost"
+# Server port. Optional, default 5432.
+port = 5432
+# User name. Required.
+user = "postgres"
+# Password. Optional. The DATABASE_PASSWORD environment variable, when set (even to an
+# empty value), replaces this value, so the password does not have to be stored here.
+password = "postgres"
+# Database name. Required.
+database = "software_factory"
+# TLS mode: "disable", "prefer" or "require". Optional, default "prefer".
+ssl_mode = "prefer"
+# Maximum number of connections in the pool. Optional, default 5.
+max_connections = 5
+# Seconds to wait for the startup check (connect + SELECT 1). Optional, default 5.
+connect_timeout_secs = 5
