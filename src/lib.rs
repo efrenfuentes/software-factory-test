@@ -3,6 +3,7 @@ use serde::Serialize;
 
 pub mod db;
 pub mod logging;
+pub mod posts;
 
 #[derive(Serialize)]
 pub struct HealthResponse {
@@ -14,7 +15,9 @@ pub async fn health() -> Json<HealthResponse> {
 }
 
 pub fn app() -> Router {
-    Router::new().route("/health", get(health))
+    Router::new()
+        .route("/health", get(health))
+        .merge(posts::router())
 }
 
 /// Same as [`app`], with one log entry per request (see [`logging::log_requests`]).

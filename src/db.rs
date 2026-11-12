@@ -114,6 +114,8 @@ pub enum DbError {
     Connect { target: String, source: sqlx::Error },
     /// The server did not answer within `connect_timeout_secs`.
     Timeout { target: String, secs: u64 },
+    /// Applying the embedded migrations failed.
+    Migrate { source: sqlx::migrate::MigrateError },
 }
 
 impl fmt::Display for DbError {
@@ -150,6 +152,9 @@ impl fmt::Display for DbError {
                 f,
                 "could not connect to PostgreSQL at {target}: no response within {secs}s"
             ),
+            DbError::Migrate { source } => {
+                write!(f, "could not apply database migrations: {source}")
+            }
         }
     }
 }
@@ -159,6 +164,7 @@ impl std::error::Error for DbError {
         match self {
             DbError::Read { source, .. } => Some(source),
             DbError::Connect { source, .. } => Some(source),
+            DbError::Migrate { source } => Some(source),
             _ => None,
         }
     }
@@ -288,6 +294,15 @@ pub async fn connect(config: &DatabaseConfig) -> Result<PgPool, DbError> {
             secs: config.connect_timeout_secs,
         }),
     }
+}
+
+/// Applies the migrations in `migrations/` (embedded at build time). Already applied
+/// migrations are skipped, so calling this repeatedly is safe.
+pub async fn migrate(pool: &PgPool) -> Result<(), DbError> {
+    sqlx::migrate!("./migrations")
+        .run(pool)
+        .await
+        .map_err(|source| DbError::Migrate { source })
 }
 
 #[cfg(test)]
@@ -459,6 +474,19 @@ database = "software_factory"
         let err = DatabaseConfig::load(path).unwrap_err();
         assert!(matches!(err, DbError::Read { .. }), "{err:?}");
         assert!(err.to_string().contains(&path.display().to_string()));
+    }
+
+    #[test]
+    fn migrate_error_message() {
+        let err = DbError::Migrate {
+            source: sqlx::migrate::MigrateError::VersionMissing(1),
+        };
+        assert!(
+            err.to_string()
+                .starts_with("could not apply database migrations: "),
+            "{err}"
+        );
+        assert!(std::error::Error::source(&err).is_some());
     }
 
     #[test]

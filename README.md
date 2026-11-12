@@ -1,7 +1,7 @@
 # software-factory-test
 
-A minimal HTTP API built with [Axum](https://github.com/tokio-rs/axum). It exposes a single
-health-check endpoint.
+A minimal HTTP API built with [Axum](https://github.com/tokio-rs/axum). It exposes a
+health-check endpoint and a Post resource stored in PostgreSQL.
 
 ## Prerequisites
 
@@ -65,7 +65,8 @@ cp config/database.example.toml config/database.toml
 cargo run
 ```
 
-The server prints `Connected to PostgreSQL at localhost:5432/software_factory`.
+The server prints `Connected to PostgreSQL at localhost:5432/software_factory`, then
+`Database migrations applied`.
 
 All keys go under a `[postgres]` table:
 
@@ -94,6 +95,10 @@ At startup:
 
 - If the config file exists, the server parses it, connects, and runs `SELECT 1`. Then it
   prints `Connected to PostgreSQL at <host>:<port>/<database>`.
+- After connecting, it applies the SQL migrations in `migrations/` (embedded in the binary at
+  build time) and prints `Database migrations applied`. Migrations that were already applied
+  are skipped (sqlx records them in the `_sqlx_migrations` table), so restarting is safe. If
+  a migration fails, the server prints `Database error: ...` and exits with status 1.
 - If the file is invalid, or the database cannot be reached or does not answer within
   `connect_timeout_secs`, the server prints an error that names the file or host and exits
   with status 1. The password is never printed.
@@ -105,14 +110,66 @@ At startup:
 `config/database.toml` is resolved relative to the working directory. Run the server from the
 repository root, or set `DATABASE_CONFIG` to an absolute path.
 
+## Posts API
+
+A post has these fields:
+
+| Field        | Type                 | Notes                                               |
+|--------------|----------------------|-----------------------------------------------------|
+| `id`         | integer              | Assigned by the database, read-only                 |
+| `title`      | string               | Required, not blank, at most 200 characters         |
+| `body`       | string               | Required, may be empty                              |
+| `created_at` | string (RFC 3339 UTC)| Set on insert, read-only                            |
+| `updated_at` | string (RFC 3339 UTC)| Set on insert and on every update, read-only        |
+
+Request and response bodies are JSON. Send `Content-Type: application/json` with a body.
+
+| Method   | Path          | Body                 | Success                                              |
+|----------|---------------|----------------------|------------------------------------------------------|
+| `POST`   | `/posts`      | `{"title","body"}`   | `201 Created`, the post, `Location: /posts/{id}`     |
+| `GET`    | `/posts`      |                      | `200 OK`, all posts as an array, ordered by `id`     |
+| `GET`    | `/posts/{id}` |                      | `200 OK`, the post                                   |
+| `PUT`    | `/posts/{id}` | `{"title","body"}`   | `200 OK`, the updated post (both fields replaced)    |
+| `DELETE` | `/posts/{id}` |                      | `204 No Content`, empty body                         |
+
+Errors have the body `{"error": "<message>"}`:
+
+- `400 Bad Request` — the body is not valid JSON, is missing `title` or `body`, has unknown
+  fields or wrong types, or `Content-Type` is not `application/json`; or `{id}` is not a
+  positive integer.
+- `422 Unprocessable Entity` — `title` is blank or longer than 200 characters.
+- `404 Not Found` — no post with that id.
+- `503 Service Unavailable` — the server runs without a database
+  (`{"error":"database not configured"}`).
+- `500 Internal Server Error` — unexpected database error. The response says only
+  `internal server error`; the details go to stderr.
+
+Other methods return `405 Method Not Allowed`.
+
+Examples:
+
+```sh
+curl -i -X POST http://localhost:3000/posts \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Hello","body":"First post"}'
+curl -i http://localhost:3000/posts
+curl -i http://localhost:3000/posts/1
+curl -i -X PUT http://localhost:3000/posts/1 \
+  -H 'Content-Type: application/json' \
+  -d '{"title":"Hello again","body":"Edited"}'
+curl -i -X DELETE http://localhost:3000/posts/1
+```
+
 ## Run the tests
 
 ```sh
 cargo test
 ```
 
-`cargo test` needs no database. The test that connects to a real PostgreSQL (using
-`config/database.example.toml`) is ignored by default. Run it with PostgreSQL running:
+`cargo test` needs no database. The tests that use a real PostgreSQL (the connection check
+and the Posts API tests, using `config/database.example.toml`) are ignored by default. They
+create and delete their own posts, so they can run against a database that already has data.
+Run them with PostgreSQL running:
 
 ```sh
 docker compose up -d
