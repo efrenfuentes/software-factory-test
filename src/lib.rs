@@ -1,6 +1,7 @@
-use axum::{Json, Router, routing::get};
+use axum::{Extension, Json, Router, routing::get};
 use serde::Serialize;
 
+pub mod db;
 pub mod logging;
 
 #[derive(Serialize)]
@@ -19,6 +20,11 @@ pub fn app() -> Router {
 /// Same as [`app`], with one log entry per request (see [`logging::log_requests`]).
 pub fn app_with_request_logging() -> Router {
     app().layer(axum::middleware::from_fn(logging::log_requests))
+}
+
+/// Makes `pool` available to handlers as `Extension<PgPool>`.
+pub fn with_database(router: Router, pool: sqlx::PgPool) -> Router {
+    router.layer(Extension(pool))
 }
 
 /// Request logging is on if `--log-requests` is among the args, or the env value
