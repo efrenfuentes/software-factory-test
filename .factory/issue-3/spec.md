@@ -27,7 +27,11 @@ with its HTTP status code.
   ```
 - Requests that match no route (404) and wrong methods (405) are logged too.
 - Logging never changes what the client receives: status, headers and body are the same
-  whether logging is on or off.
+  whether logging is on or off. This also holds when the request body stream fails while
+  it is read. The handler is still called and returns what it would return without
+  logging: `GET /health` still gives 200, and an unknown route still gives 404. A handler
+  that reads the body sees the same error it would see without logging. The log line then
+  shows `request_body="<unreadable body>"`.
 - Body display rules in the log:
   - UTF-8 bodies are printed as text (quoted/escaped, so each entry stays on one line);
   - bodies longer than 1024 bytes are cut to 1024 bytes and marked `…(truncated, N bytes total)`;
@@ -43,7 +47,8 @@ with its HTTP status code.
 - [ ] The query string appears in the logged `uri`.
 - [ ] An automated test shows that the response the client gets (status, `content-type`, body) is identical with and without the logging middleware.
 - [ ] An automated test captures the log output and checks the method, URI, status, request body and response body.
-- [ ] Unit tests cover truncation of long bodies and the binary-body placeholder.
+- [ ] Unit tests cover truncation of long bodies, including a limit that falls inside a multibyte character, and the binary-body placeholder.
+- [ ] Regression tests send a failing request-body stream with logging on and with logging off, and get the same status and body both ways: 200 for `GET /health`, 404 for an unknown route, 405 for `POST /health`, and the same result for a handler that reads the body. The log shows `request_body="<unreadable body>"`.
 - [ ] README documents the option and shows a sample log line.
 - [ ] `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test` pass.
 
