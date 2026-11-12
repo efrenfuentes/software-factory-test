@@ -43,7 +43,7 @@ pub struct DatabaseConfig {
     #[serde(default = "default_port")]
     pub port: u16,
     pub user: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_password")]
     pub password: Option<String>,
     pub database: String,
     #[serde(default)]
@@ -52,6 +52,16 @@ pub struct DatabaseConfig {
     pub max_connections: u32,
     #[serde(default = "default_connect_timeout_secs")]
     pub connect_timeout_secs: u64,
+}
+
+/// Deserializes `password`, replacing any error with a fixed message so a malformed value
+/// (for example an unquoted number) is never echoed in diagnostics.
+fn deserialize_password<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer)
+        .map_err(|_| serde::de::Error::custom("invalid value for `password`: expected a string"))
 }
 
 fn default_port() -> u16 {
@@ -393,6 +403,19 @@ database = "software_factory"
         assert_parse_error_hides_password(
             "[postgres]\nhost = \"localhost\"\npassword = \"a\"\npassword = \"s3cr3t-pw\"\nuser = \"u\"\ndatabase = \"d\"\n",
         );
+    }
+
+    #[test]
+    fn unquoted_numeric_password_hides_value() {
+        let input = "[postgres]\nhost = \"localhost\"\nuser = \"u\"\npassword = 987654321\ndatabase = \"d\"\n";
+        let err = DatabaseConfig::from_toml(input).unwrap_err();
+        let display = err.to_string();
+        let debug = format!("{err:?}");
+        assert!(matches!(err, DbError::Parse { .. }), "{debug}");
+        assert!(!display.contains("987654321"), "{display}");
+        assert!(!debug.contains("987654321"), "{debug}");
+        assert!(display.contains("password"), "{display}");
+        assert!(display.contains("line 4"), "{display}");
     }
 
     #[test]
